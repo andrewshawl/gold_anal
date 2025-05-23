@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-analyzer_xauusd_m1.py · versión 25-may-2025 (patch-bugs 1-4)
-===========================================================
+analyzer_xauusd_m1.py · versión 25-may-2025 (patch-bugs 1-4 + defaults MC)
+===========================================================================
 
 ✦ Cambios clave
 ────────────────
@@ -10,8 +10,8 @@ analyzer_xauusd_m1.py · versión 25-may-2025 (patch-bugs 1-4)
 2. Off-by-one cuando no hay step_plan corregido (niveles extra = max-1)   (Bug #2)
 3. count_rollovers() evita tz_convert redundantes                         (Bug #3)
 4. Validación STOP-loss: se fuerza a negativo y se avisa al usuario       (Bug #4)
-
-El resto reproduce el script original al 100 %.
+5. Valores por defecto Monte Carlo: lot0 0.01, distance 0.25, max_steps 100,
+   n_samples 100 000; sin widget de DD intermedia                         (Req.)
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 TZ_CDMX       = pytz.timezone("America/Mexico_City")
 CONTRACT_SIZE = 100      # onzas por lote
 
-# ════════════════ utilidades de gaps / sesiones ═════════════════════════════
+# ═════════════ utilidades de gaps / sesiones ═══════════════════════════════
 def classify_gap(prev_ts: pd.Timestamp, curr_ts: pd.Timestamp,
                  daily_min: int = 45, weekend_min: int = 60) -> str:
     delta = (curr_ts - prev_ts).total_seconds() / 60
@@ -76,9 +76,7 @@ def session_label(hr: int) -> str:
     return "Asia-noche"
 
 def count_rollovers(start: pd.Timestamp, end: pd.Timestamp, rollover_hr: int) -> int:
-    """
-    Nº de roll-overs (hora fija CDMX) entre dos timestamps YA en TZ_CDMX.
-    """
+    """Nº de roll-overs (hora fija CDMX) entre dos timestamps YA en TZ_CDMX."""
     if end <= start:
         return 0
     first = start.normalize() + pd.Timedelta(hours=rollover_hr)
@@ -88,7 +86,7 @@ def count_rollovers(start: pd.Timestamp, end: pd.Timestamp, rollover_hr: int) ->
         return 0
     return (end - first).days + 1
 
-# ═══════════════ helpers plan de pasos (“segmento”) ════════════════════════
+# ═════════════ helpers plan de pasos (“segmento”) ══════════════════════════
 def total_levels(plan: List[Tuple[int, float]]) -> int:
     return sum(n for n, _ in plan)
 
@@ -358,8 +356,11 @@ def fig_gaps_top(dg):
     fig.tight_layout()
     return fig
 
-# ═══════════════ MONTE CARLO (plan segmental) ══════════════════════════════
 def sample_start(df, max_lv, n, lookahead=10) -> np.ndarray:
+    """Devuelve índices de arranque aleatorios para las simulaciones."""
+    # <<< NUEVO: reseed impredecible cada llamada >>>
+    np.random.seed(None)          # usa entropía del SO
+
     hist = len(df)
     need = max_lv * lookahead
     if hist - need <= 0:
@@ -367,6 +368,7 @@ def sample_start(df, max_lv, n, lookahead=10) -> np.ndarray:
         warnings.warn("Histórico corto: lookahead reducido.")
     lim = hist - max_lv * lookahead
     return np.random.choice(max(lim, 1), size=n, replace=n > lim)
+
 
 def calc_eq(price, entry, lots, side):
     return (
@@ -562,7 +564,7 @@ def run_mc(
     prog.empty()
     return pd.DataFrame(out)
 
-# ═══════════════ SIDEBAR INPUTS ═════════════════════════════════════════════
+# ═════════════ SIDEBAR INPUTS ══════════════════════════════════════════════
 uploaded = st.file_uploader("Archivo MT5 / CSV (<DATE>)", ["txt", "csv"])
 
 c_thr_in = st.sidebar.text_input("Umbrales conteo", "5,10,15,20,25,30")
@@ -571,31 +573,54 @@ tail_thr = st.sidebar.number_input("Umbral cola hist", 1, 100, 5)
 gap_min  = st.sidebar.number_input("Min gap (min)", 1, 240, 45)
 want_parq = st.sidebar.checkbox("Parquet", False)
 
-st.sidebar.markdown("---"); st.sidebar.subheader("Monte Carlo")
+st.sidebar.markdown("---")
+st.sidebar.subheader("Monte Carlo")
 
-lot0      = st.sidebar.number_input("LOT0 (lot)", 0.01, 5.0, 0.10, 0.01, format="%.2f")
-q_factor  = st.sidebar.number_input("Factor inicial q", 1.01, 2.0, 1.10, 0.01, format="%.2f")
-distance  = st.sidebar.slider("distance (USD)", 0.05, 3.0, 0.50, 0.05)
-tp_offset = st.sidebar.number_input("tp_offset (USD)", 0.01, 5.0, 0.06, 0.01, format="%.2f")
-stop_loss = st.sidebar.number_input("STOP-loss (USD < 0)", -500000.0, -1.0, -200000.0, 1000.0, format="%.0f")
-max_steps = st.sidebar.number_input("max_steps", 1, 10000, 30, 1)
-n_samples = st.sidebar.number_input("n_samples", 100, 100000, 1000, 100)
+# ───────── parámetros Monte Carlo (sidebar) ───────────────────────────────
+lot0 = st.sidebar.number_input(
+    "LOT0 (lot)", 0.01, 5.0, 0.01, 0.01, format="%.2f"
+)
+q_factor = st.sidebar.number_input(
+    "Factor inicial q", 1.01, 2.0, 1.10, 0.01, format="%.2f"
+)
+distance = st.sidebar.slider(
+    "distance (USD)", 0.05, 3.0, 0.25, 0.05
+)
+tp_offset = st.sidebar.number_input(
+    "tp_offset (USD)", 0.01, 5.0, 0.06, 0.01, format="%.2f"
+)
+stop_loss = st.sidebar.number_input(
+    "STOP-loss (USD < 0)", -500000.0, -1.0, -200000.0, 1000.0, format="%.0f"
+)
+max_steps = st.sidebar.number_input(
+    "max_steps", 1, 10000, 100, 1
+)
+n_samples = st.sidebar.number_input(
+    "n_samples", 100, 100000, 100000, 100
+)
+step_plan_in = st.sidebar.text_input("Plan de pasos (n:factor)", "")
 
-step_plan_in = st.sidebar.text_input("Plan de pasos (n:factor)", "3:1.10,5:2")
-dd_int_in    = st.sidebar.text_input("Umbrales DD intermedios (USD)", "100000,150000")
+# sin widget de DD intermedia
+dd_int_thr: list[int] = []
 
-swap_long   = st.sidebar.number_input("Swap BUY (USD/lot/noche)", -20.0, 20.0, -4.0, 0.1)
-swap_short  = st.sidebar.number_input("Swap SELL (USD/lot/noche)", -20.0, 20.0,  1.0, 0.1)
-rollover_hr = st.sidebar.number_input("Hora rollover CDMX", 0, 23, 16, 1)
+swap_long   = st.sidebar.number_input(
+    "Swap BUY (USD/lot/noche)", -20.0, 20.0, -4.0, 0.1
+)
+swap_short  = st.sidebar.number_input(
+    "Swap SELL (USD/lot/noche)", -20.0, 20.0,  1.0, 0.1
+)
+rollover_hr = st.sidebar.number_input(
+    "Hora rollover CDMX", 0, 23, 16, 1
+)
 
+# ───────── parseo plan escalonado ─────────────────────────────────────────
 try:
-    step_plan   = parse_plan(step_plan_in)
-    dd_int_thr  = [int(x) for x in dd_int_in.split(",") if x.strip()]
+    step_plan = parse_plan(step_plan_in)
 except ValueError as e:
-    st.error(f"Error en planes / umbrales: {e}")
+    st.error(f"Error en plan de pasos: {e}")
     st.stop()
 
-# ── Bug #4 – STOP-loss debe ser negativo ───────────────────────────────────
+# ── Bug #4 – STOP-loss debe ser negativo ──────────────────────────────────
 if stop_loss >= 0:
     st.sidebar.warning("STOP-loss debe ser negativo. Se usará su negativo.")
     stop_loss = -abs(stop_loss)
@@ -607,7 +632,7 @@ st.sidebar.caption(f"Tamaño total teórico: **{lot_tot:,.2f} lots**")
 run_basic = st.button("Ejecutar análisis")
 run_mc_bt = st.button("⏱ Monte Carlo")
 
-# ─────────── BLOQUE 1 – ANÁLISIS BÁSICO ────────────────────────────────────
+# ───────── BLOQUE 1 – ANÁLISIS BÁSICO ─────────────────────────────────────
 if run_basic:
     try:
         cnt_thr = [int(x) for x in c_thr_in.split(",") if x.strip()]
@@ -721,7 +746,7 @@ if run_basic:
             )
         st.success("¡Análisis estándar listo!")
 
-# ─────────── BLOQUE 2 – MONTE CARLO ────────────────────────────────────────
+# ───────── BLOQUE 2 – MONTE CARLO ─────────────────────────────────────────
 if run_mc_bt:
     if "df" not in st.session_state:
         st.warning("Ejecuta primero el análisis estándar.")
@@ -748,7 +773,7 @@ if run_mc_bt:
         exec_t = time.time() - t0
     logging.info("Monte Carlo completado en %.2f s", exec_t)
 
-    # mantén dd_at_*  (ya no los eliminamos)
+    # mantiene dd_at_* (no se eliminan)
     df_mc_c = df_mc.assign(
         session=lambda d: np.where(d["broke"], d["stuck_session"], d["exit_session"])
     )
