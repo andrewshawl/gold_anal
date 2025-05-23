@@ -582,7 +582,7 @@ max_steps = st.sidebar.number_input("max_steps", 1, 10000, 30, 1)
 n_samples = st.sidebar.number_input("n_samples", 100, 100000, 1000, 100)
 
 step_plan_in = st.sidebar.text_input("Plan de pasos (n:factor)", "3:1.10,5:2")
-
+dd_int_in    = st.sidebar.text_input("Umbrales DD intermedios (USD)", "100000,150000")
 
 swap_long   = st.sidebar.number_input("Swap BUY (USD/lot/noche)", -20.0, 20.0, -4.0, 0.1)
 swap_short  = st.sidebar.number_input("Swap SELL (USD/lot/noche)", -20.0, 20.0,  1.0, 0.1)
