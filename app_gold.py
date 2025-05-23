@@ -820,7 +820,14 @@ if run_mc_bt:
             "swap_usd", "exit_pnl_usd",
         ]
         st.subheader("Top-50 quiebras (CDMX)")
-        st.dataframe(broke_df.sort_values("dd_pico").head(50)[cols])
+    st.dataframe(
+        broke_df.sort_values("dd_pico").head(50)[cols]
+        .style.format({
+            "dd_pico": "{:,.0f}",
+            "swap_usd": "{:,.0f}",
+            "exit_pnl_usd": "{:,.0f}",
+        })
+    )
 
     tmp = tempfile.TemporaryDirectory(prefix="mc_")
     df_mc_c.to_csv(Path(tmp.name, "montecarlo_results.csv"), index=False)
